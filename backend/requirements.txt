@@ -1,0 +1,12 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+httpx==0.28.1
+beautifulsoup4==4.12.3
+lxml==5.3.0
+apscheduler==3.10.4
+python-dateutil==2.9.0.post0
+pydantic==2.10.3
+pydantic-settings==2.6.1
+# 可选：应对 JS 反爬/WAF，安装后执行 playwright install chromium
+playwright==1.49.1

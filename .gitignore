@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 虚拟环境（不要上传）
+backend/venv/
+venv/
+.venv/
+
+# 环境与密钥
+.env
+.env.local
+*.pem
+
+# 本地数据库与运行数据
+backend/data/
+*.db
+*.sqlite3
+
+# IDE / 系统
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+
+# Playwright 浏览器缓存（本机安装，无需入库）
+.playwright/

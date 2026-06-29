@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+  <meta charset="UTF-8">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>保研夏令营检索平台 | 法学院 & 外国语学院</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+
+</head>
+
+<body>
+
+  <header class="header">
+
+    <div id="pagesBanner" class="pages-banner" style="display:none">
+
+      当前为 GitHub Pages 静态预览，检索/提交链接等功能需在本地运行 <code>start.bat</code> 或部署后端后使用。
+
+    </div>
+
+    <div class="container header-inner">
+
+      <div class="brand">
+
+        <div class="brand-icon">保</div>
+
+        <div>
+
+          <h1>保研夏令营检索平台</h1>
+
+          <p class="subtitle">学院官网 · 微信公众号 · 仅2026年及以后</p>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </header>
+
+
+
+  <main class="container main-content">
+
+    <div class="main-tabs" id="mainTabs">
+
+      <button class="main-tab active" data-panel="summer_camp">夏令营</button>
+
+      <button class="main-tab" data-panel="pre_admission">预推免</button>
+
+      <button class="main-tab" data-panel="institutions">院校名录</button>
+
+    </div>
+
+
+
+    <!-- 用户提交通知链接 -->
+
+    <section id="submitNoticePanel" class="submit-panel" style="display:none">
+
+      <div class="submit-panel-inner">
+
+        <div class="submit-panel-head">
+
+          <h2>提交通知链接</h2>
+
+          <p>粘贴某学院官网发布的夏令营/预推免通知地址，平台将先校验是否为官方 edu.cn 链接，再自动提取时间等信息并收录。</p>
+
+        </div>
+
+        <form id="submitNoticeForm" class="submit-form">
+
+          <div class="submit-row">
+
+            <label for="submitCollege">学校 - 学院</label>
+
+            <select id="submitCollege" required>
+
+              <option value="">请选择学院…</option>
+
+            </select>
+
+          </div>
+
+          <div class="submit-row submit-row-url">
+
+            <label for="submitUrl">通知链接</label>
+
+            <input id="submitUrl" type="url" required placeholder="https://law.xxx.edu.cn/..." />
+
+            <button type="submit" class="btn btn-primary" id="submitNoticeBtn">校验并收录</button>
+
+          </div>
+
+          <p class="submit-hint">须为学院或学校官网（*.edu.cn）上的通知正文页，汇总页/PDF/非招生通知可能无法通过校验。</p>
+
+        </form>
+
+        <div id="submitResult" class="submit-result" style="display:none"></div>
+
+      </div>
+
+    </section>
+
+
+
+    <!-- 夏令营板块 -->
+
+    <section id="panelSummerCamp" class="board-panel">
+
+      <div class="tier-bar" id="tierBarSummer"></div>
+
+      <div class="board-toolbar">
+
+        <span class="last-update" id="lastUpdateSummer">等待更新...</span>
+
+        <button class="btn btn-primary" id="crawlBtnSummer" onclick="triggerCrawl('summer_camp')">
+
+          <span class="btn-icon crawl-icon" id="crawlIconSummer">↻</span> 检索985院校
+
+        </button>
+
+      </div>
+
+      <div class="stats-grid board-stats" id="statsSummer"></div>
+
+      <div class="filters" id="filtersSummer"></div>
+
+      <div class="tabs status-tabs" id="tabsSummer"></div>
+
+      <div id="loadingSummer" class="loading-state"><div class="spinner"></div><p>加载中...</p></div>
+
+      <div id="emptySummer" class="empty-state" style="display:none"><p>暂无夏令营通知</p></div>
+
+      <div id="listSummer" class="announcement-list"></div>
+
+    </section>
+
+
+
+    <!-- 预推免板块 -->
+
+    <section id="panelPreAdmission" class="board-panel" style="display:none">
+
+      <div class="tier-bar" id="tierBarPre"></div>
+
+      <div class="board-toolbar">
+
+        <span class="last-update" id="lastUpdatePre">等待更新...</span>
+
+        <button class="btn btn-primary" id="crawlBtnPre" onclick="triggerCrawl('pre_admission')">
+
+          <span class="btn-icon crawl-icon" id="crawlIconPre">↻</span> 检索985院校
+
+        </button>
+
+      </div>
+
+      <div class="stats-grid board-stats" id="statsPre"></div>
+
+      <div class="filters" id="filtersPre"></div>
+
+      <div class="tabs status-tabs" id="tabsPre"></div>
+
+      <div id="loadingPre" class="loading-state"><div class="spinner"></div><p>加载中...</p></div>
+
+      <div id="emptyPre" class="empty-state" style="display:none"><p>暂无预推免通知</p></div>
+
+      <div id="listPre" class="announcement-list"></div>
+
+    </section>
+
+
+
+    <!-- 院校名录 -->
+
+    <section id="panelInstitutions" style="display:none">
+
+      <div class="inst-panel-tabs">
+
+        <button class="chip active" data-inst-panel="all">全部院校</button>
+
+        <button class="chip" data-inst-panel="dfc">双一流147所</button>
+
+      </div>
+
+      <div id="instPanelAll">
+
+        <div class="inst-summary" id="instSummary"></div>
+
+        <div class="filters inst-filters">
+
+          <div class="filter-group">
+
+            <label>学院类型</label>
+
+            <div class="chip-group" id="instCollegeFilter">
+
+              <button class="chip active" data-value="">全部</button>
+
+              <button class="chip" data-value="law">法学院</button>
+
+              <button class="chip" data-value="foreign_lang">外国语学院</button>
+
+            </div>
+
+          </div>
+
+          <div class="filter-group">
+
+            <label>地区</label>
+
+            <div class="chip-group region-chips" id="instRegionFilter">
+
+              <button class="chip active" data-value="">全部</button>
+
+              <button class="chip" data-value="华北">华北</button>
+
+              <button class="chip" data-value="东北">东北</button>
+
+              <button class="chip" data-value="华东">华东</button>
+
+              <button class="chip" data-value="华中">华中</button>
+
+              <button class="chip" data-value="华南">华南</button>
+
+              <button class="chip" data-value="西南">西南</button>
+
+              <button class="chip" data-value="西北">西北</button>
+
+            </div>
+
+          </div>
+
+          <div class="filter-group">
+
+            <label>院校层次</label>
+
+            <div class="chip-group" id="instTagFilter">
+
+              <button class="chip active" data-value="">全部</button>
+
+              <button class="chip" data-value="985">985</button>
+
+              <button class="chip" data-value="211">211</button>
+
+              <button class="chip" data-value="双一流">双一流</button>
+
+            </div>
+
+          </div>
+
+          <div class="search-box">
+
+            <input type="text" id="instSearchInput" placeholder="搜索学校、学院、省份..." />
+
+          </div>
+
+        </div>
+
+        <div id="instLoading" class="loading-state" style="display:none"><div class="spinner"></div></div>
+
+        <div id="instList" class="region-list"></div>
+
+      </div>
+
+      <div id="instPanelDfc" style="display:none">
+
+        <div class="inst-summary" id="dfcSummary"></div>
+
+        <div class="filters inst-filters">
+
+          <div class="filter-group">
+
+            <label>学院类型</label>
+
+            <div class="chip-group" id="dfcCollegeFilter">
+
+              <button class="chip active" data-value="">全部</button>
+
+              <button class="chip" data-value="law">法学院</button>
+
+              <button class="chip" data-value="foreign_lang">外国语学院</button>
+
+            </div>
+
+          </div>
+
+          <div class="filter-group">
+
+            <label>地区</label>
+
+            <div class="chip-group region-chips" id="dfcRegionFilter">
+
+              <button class="chip active" data-value="">全部</button>
+
+              <button class="chip" data-value="华北">华北</button>
+
+              <button class="chip" data-value="东北">东北</button>
+
+              <button class="chip" data-value="华东">华东</button>
+
+              <button class="chip" data-value="华中">华中</button>
+
+              <button class="chip" data-value="华南">华南</button>
+
+              <button class="chip" data-value="西南">西南</button>
+
+              <button class="chip" data-value="西北">西北</button>
+
+            </div>
+
+          </div>
+
+          <div class="filter-group">
+
+            <label>院校层次</label>
+
+            <div class="chip-group" id="dfcTagFilter">
+
+              <button class="chip active" data-value="">全部</button>
+
+              <button class="chip" data-value="985">985</button>
+
+              <button class="chip" data-value="211">211</button>
+
+              <button class="chip" data-value="双一流">双一流</button>
+
+            </div>
+
+          </div>
+
+          <div class="search-box">
+
+            <input type="text" id="dfcSearchInput" placeholder="搜索双一流高校..." />
+
+          </div>
+
+        </div>
+
+        <div id="dfcList" class="region-list"></div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+
+
+  <footer class="footer">
+
+    <div class="container">
+
+      <p>已收录的通知下次检索自动跳过 · 各板块独立刷新</p>
+
+      <p class="footer-note">链接直达学院官网或微信原文，请以官方发布为准</p>
+
+    </div>
+
+  </footer>
+
+
+
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+
+</body>
+
+</html>
+
+
