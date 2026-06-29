@@ -8,13 +8,25 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+  <script>
+    window.__ASSET_BASE__ = (function () {
+      if (/github\.io$/i.test(location.hostname)) {
+        var repo = location.pathname.split('/').filter(Boolean)[0] || 'something';
+        return '/' + repo + '/';
+      }
+      return '/';
+    })();
+  </script>
+
   <title>保研夏令营检索平台 | 法学院 & 外国语学院</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
 
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" id="app-css">
+
+  <script>document.getElementById('app-css').href = window.__ASSET_BASE__ + 'style.css';</script>
 
 </head>
 
@@ -374,7 +386,9 @@
 
   <div id="toast" class="toast"></div>
 
-  <script src="app.js"></script>
+  <script id="app-js"></script>
+
+  <script>document.getElementById('app-js').src = window.__ASSET_BASE__ + 'app.js';</script>
 
 </body>
 
