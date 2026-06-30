@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 from crawler.boards import PRE_ADMISSION, SUMMER_CAMP, is_relevant_for_crawl
 from crawler.coverage import sync_coverage_from_announcements
 from crawler.detail_enricher import enrich_announcement
-from crawler.fetcher import fetch_page, is_blocked_html
-from crawler.official_verify import classify_source, is_official_host, resolve_final_url, verify_official_url
+from crawler.fetcher import create_http_client, fetch_page, is_blocked_html
+from crawler.official_verify import is_official_host, resolve_final_url, verify_official_url
+from crawler.source_labels import SUBMIT_LABEL
 from crawler.parser import (
     ParsedAnnouncement,
     detect_event_type,
@@ -21,7 +22,7 @@ from crawler.parser import (
 )
 from crawler.service import save_announcements
 from crawler.university_config import UNIVERSITY_TARGETS
-from crawler.url_quality import is_recap_notice, is_stale_url
+from crawler.url_quality import is_pdf_url, is_recap_notice, is_stale_url
 from models import Announcement
 
 logger = logging.getLogger(__name__)
@@ -140,30 +141,57 @@ async def submit_notice_link(
     if board not in (SUMMER_CAMP, PRE_ADMISSION):
         board = SUMMER_CAMP
 
+    from crawler.wechat_article import is_weixin_url, fetch_weixin_article
+
     target = find_target(university, college)
     if not target:
         raise SubmitNoticeError("该学院不在本平台收录范围内", code="not_monitored")
 
-    if not is_valid_announcement_url(url):
-        raise SubmitNoticeError("链接格式无效，请填写 http(s) 开头的 edu.cn 官方地址")
+    is_weixin = is_weixin_url(url)
 
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; CampSubmit/1.0)"}
-    async with httpx.AsyncClient(
-        timeout=30,
-        follow_redirects=True,
-        headers=headers,
-        verify=False,
-    ) as client:
-        final_url = await resolve_final_url(url, client)
-        if not is_valid_announcement_url(final_url):
+    if not is_weixin and not is_valid_announcement_url(url):
+        raise SubmitNoticeError("链接格式无效，请填写 http(s) 开头的 edu.cn 或微信公众号链接")
+
+    async with create_http_client(timeout=30) as client:
+        if is_weixin:
+            final_url = url.split("#")[0].strip()
+        else:
+            final_url = await resolve_final_url(url, client)
+            if is_weixin_url(final_url):
+                is_weixin = True
+
+        if not is_weixin and not is_valid_announcement_url(final_url):
             raise SubmitNoticeError("跳转后的链接无效")
 
-        html = await fetch_page(final_url, client=client)
-        title = extract_page_title(html) if html and not is_blocked_html(html) else ""
+        html = ""
+        title = ""
+        wx_text = ""
+        if is_weixin:
+            final_url, wx_title, wx_text, html = await fetch_weixin_article(final_url, client=client)
+            title = wx_title or title
+            if not title and not wx_text and html and "环境异常" in html:
+                raise SubmitNoticeError(
+                    "微信页面需要人机验证，服务器无法自动读取。"
+                    "请在浏览器中打开该链接确认可访问后，稍后再试；"
+                    "或改用学院官网链接提交。",
+                    code="weixin_verify",
+                )
+        else:
+            html = await fetch_page(final_url, client=client)
+        blocked = is_blocked_html(html) if html and not is_weixin else False
+        if html and not blocked and not is_weixin:
+            if is_pdf_url(final_url):
+                from crawler.pdf_extractor import extract_title_from_document_text
+                title = extract_title_from_document_text(html)
+            else:
+                title = extract_page_title(html)
 
-        ok, source_label = _verify_submitted_url(
-            final_url, target, title=title, html=html,
-        )
+        if is_weixin:
+            ok, source_label = True, "微信公众号"
+        else:
+            ok, source_label = _verify_submitted_url(
+                final_url, target, title=title, html=html,
+            )
         if not ok:
             raise SubmitNoticeError(
                 "该链接未通过官方来源校验。"
@@ -190,15 +218,17 @@ async def submit_notice_link(
             university=target.university,
             college=target.college,
             college_type=target.college_type,
-            source=source_label or "学院官网",
+            source=SUBMIT_LABEL,
             event_type=detect_event_type(title),
         )
 
-        if html and not is_blocked_html(html):
+        if is_weixin and wx_text:
+            item.summary = wx_text[:500]
+        elif html and not is_blocked_html(html):
             enrich_from_html(item, html)
 
         board_use = PRE_ADMISSION if "预推免" in (item.title or "") else board
-        await enrich_announcement(item, board=board_use, phase=phase, client=client)
+        await enrich_announcement(item, board=board_use, phase=phase, client=client, mode="full")
 
         if not is_year_eligible(item.title, item.publish_date, item.deadline):
             raise SubmitNoticeError("仅收录 2026 年及以后的夏令营/预推免通知", code="year")

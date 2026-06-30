@@ -4,6 +4,7 @@ import logging
 from urllib.parse import urlparse
 
 from double_first_class import DOUBLE_FIRST_CLASS_UNIVERSITIES
+from crawler.source_labels import OFFICIAL_LABEL, WECHAT_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -114,15 +115,8 @@ def host_matches_target(host: str, target) -> bool:
 def classify_source(url: str, target) -> str:
     host = urlparse(url).netloc.lower()
     if WECHAT_HOST in host:
-        return "微信公众号"
-    if target.base_url:
-        college_host = urlparse(target.base_url).netloc.lower().replace("www.", "")
-        current = host.replace("www.", "")
-        if current == college_host or current.endswith("." + college_host):
-            return "学院官网"
-    if host_matches_target(host, target):
-        return "学校官网"
-    return "官方权威"
+        return WECHAT_LABEL
+    return OFFICIAL_LABEL
 
 
 def verify_official_url(

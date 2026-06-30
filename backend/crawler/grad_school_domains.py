@@ -32,6 +32,7 @@ GRAD_SCHOOL_OVERRIDES: dict[str, list[str]] = {
     "南开大学": ["yzb.nankai.edu.cn"],
     "吉林大学": ["yjsy.jlu.edu.cn"],
     "哈尔滨工业大学": ["yzb.hit.edu.cn"],
+    "哈尔滨工程大学": ["yjszs.hrbeu.edu.cn", "yz.hrbeu.edu.cn"],
     "大连海事大学": ["yz.dlmu.edu.cn"],
     "东北师范大学": ["yjsy.nenu.edu.cn"],
     "湖南大学": ["gra.hnu.edu.cn"],

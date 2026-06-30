@@ -21,7 +21,7 @@ def parse_args():
 
 
 async def main():
-    init_db()
+    init_db(sync_coverage=True)
     args = parse_args()
     targets = UNIVERSITY_TARGETS[: args.limit] if args.limit > 0 else UNIVERSITY_TARGETS
     db = SessionLocal()

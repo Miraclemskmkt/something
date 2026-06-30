@@ -57,15 +57,20 @@ def matches_board(ann: Announcement, board: str) -> bool:
     return announcement_board(ann) == board
 
 
-def is_relevant_for_crawl(title: str, board: str, phase: str) -> bool:
+def is_relevant_for_crawl(title: str, board: str, phase: str, summary: str = "") -> bool:
+    from crawler.noise_filter import title_filter
+
     title = title or ""
+    ok, _ = title_filter(title, summary, board=board, phase=phase)
+    if not ok:
+        return False
     if "预推免" in title and board == SUMMER_CAMP:
         return False
     if board == SUMMER_CAMP:
         if phase == "notice":
             if any(k in title for k in EXCELLENT_KEYWORDS):
                 return False
-            return any(k in title for k in ["夏令营", "暑期学校", "开放日", "暑期营", "夏令营招生"])
+            return True
         return any(k in title for k in EXCELLENT_KEYWORDS) and "预推免" not in title
 
     if phase == "notice":
@@ -82,7 +87,7 @@ def search_keywords(board: str, phase: str, college_type: str | None = None) -> 
     if board == SUMMER_CAMP:
         if phase == "result":
             return ["优营名单", "优秀营员", "夏令营考核"]
-        keywords = ["夏令营", "暑期夏令营"]
+        keywords = ["夏令营", "暑期夏令营", "招生通知", "优秀大学生"]
         if college_type == "law":
             keywords.extend(["非法学 夏令营", "法律硕士 夏令营"])
         return keywords

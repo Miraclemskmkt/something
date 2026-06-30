@@ -15,7 +15,7 @@ from main import _filter_items
 
 
 def test_db_write():
-    init_db()
+    init_db(sync_coverage=True)
     db = SessionLocal()
     before = db.query(Announcement).count()
     item = ParsedAnnouncement(

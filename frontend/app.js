@@ -16,9 +16,19 @@ const BOARDS = {
 };
 
 const TIERS = [
-  { id: '985', label: '985', css: 'tier-985', btn: '检索985院校' },
-  { id: '211', label: '211', css: 'tier-211', btn: '检索211院校' },
-  { id: '双一流', label: '双一流', css: 'tier-dfc', btn: '检索双一流院校' },
+  { id: '985', label: '985', css: 'tier-985', btn: '刷新检索985' },
+  { id: '211', label: '211', css: 'tier-211', btn: '刷新检索211' },
+  { id: '双一流', label: '双一流', css: 'tier-dfc', btn: '刷新检索双一流' },
+];
+
+/** 与后端 SOURCE_CATEGORIES 一致 */
+const SOURCE_OPTIONS = [
+  { id: '学院官网', label: '学院官网', css: 'source-official' },
+  { id: '微信公众号', label: '微信公众号', css: 'source-wechat' },
+  { id: '保研论坛', label: '保研论坛', css: 'source-forum' },
+  { id: '全网检索', label: '全网检索', css: 'source-search' },
+  { id: '用户提交', label: '用户提交', css: 'source-submit' },
+  { id: '用户补全', label: '用户补全', css: 'source-manual' },
 ];
 
 const boardState = {
@@ -47,9 +57,47 @@ const state = {
 
 const IS_GITHUB_PAGES = /github\.io$/i.test(window.location.hostname);
 
+const VALID_PANELS = new Set(['summer_camp', 'pre_admission', 'institutions', 'field_enrich']);
+const UI_STATE_KEY = 'camp_ui_state';
+
 /** 本地 FastAPI 用 /api；GitHub Pages 仅静态页，无后端 API */
 function apiUrl(path) {
   return path.startsWith('/') ? path : `/${path}`;
+}
+
+function readUiState() {
+  const hash = location.hash.replace(/^#/, '');
+  let stored = {};
+  try {
+    const raw = sessionStorage.getItem(UI_STATE_KEY);
+    if (raw) stored = JSON.parse(raw);
+  } catch (_) { /* ignore */ }
+  const panel = VALID_PANELS.has(hash) ? hash
+    : (VALID_PANELS.has(stored.panel) ? stored.panel : 'summer_camp');
+  return { ...stored, panel };
+}
+
+function saveUiState() {
+  try {
+    sessionStorage.setItem(UI_STATE_KEY, JSON.stringify({
+      panel: state.panel,
+      tiers: {
+        summer_camp: boardState.summer_camp.tier,
+        pre_admission: boardState.pre_admission.tier,
+      },
+      instSubPanel: state.instSubPanel,
+    }));
+  } catch (_) { /* ignore */ }
+  const hash = `#${state.panel}`;
+  if (location.hash !== hash) {
+    history.replaceState(null, '', hash);
+  }
+}
+
+function applyStoredUiState(saved) {
+  if (saved.tiers?.summer_camp) boardState.summer_camp.tier = saved.tiers.summer_camp;
+  if (saved.tiers?.pre_admission) boardState.pre_admission.tier = saved.tiers.pre_admission;
+  if (saved.instSubPanel) state.instSubPanel = saved.instSubPanel;
 }
 
 async function fetchJSON(url) {
@@ -117,22 +165,55 @@ function fmtFormat(val) {
   return `<span class="format-badge ${cls}">${esc(val)}</span>`;
 }
 
+function isFieldsComplete(item) {
+  return !!(item.publish_date && item.deadline && item.event_time && item.event_format);
+}
+
+function deadlineCountdown(deadline) {
+  if (!deadline) return '';
+  const d = new Date(String(deadline).replace(' ', 'T'));
+  if (Number.isNaN(d.getTime())) return '';
+  const days = Math.ceil((d - Date.now()) / 86400000);
+  if (days < 0) return '<span class="countdown ended">已截止</span>';
+  if (days === 0) return '<span class="countdown urgent">今日截止</span>';
+  if (days <= 3) return `<span class="countdown urgent">距截止 ${days} 天</span>`;
+  return `<span class="countdown">距截止 ${days} 天</span>`;
+}
+
 function openNoticeUrl(url) {
   if (url) window.open(url, '_blank', 'noopener');
 }
 
-function renderNoticeCards(items) {
-  const rows = [...items].sort((a, b) =>
-    `${a.university}${a.college}`.localeCompare(`${b.university}${b.college}`, 'zh-CN')
-  );
+function parseDeadlineMs(deadline) {
+  if (!deadline) return Infinity;
+  const d = new Date(String(deadline).replace(' ', 'T'));
+  return Number.isNaN(d.getTime()) ? Infinity : d.getTime();
+}
+
+function sourceBadge(item) {
+  const label = item.source_category || item.source || '学院官网';
+  const opt = SOURCE_OPTIONS.find(o => o.id === label) || SOURCE_OPTIONS[0];
+  return `<span class="source-badge ${opt.css}">${esc(label)}</span>`;
+}
+
+function renderNoticeCards(items, { sortByDeadline = false } = {}) {
+  const rows = [...items];
+  if (sortByDeadline) {
+    rows.sort((a, b) => parseDeadlineMs(a.deadline) - parseDeadlineMs(b.deadline));
+  } else {
+    rows.sort((a, b) =>
+      `${a.university}${a.college}`.localeCompare(`${b.university}${b.college}`, 'zh-CN')
+    );
+  }
   return `
     <div class="notice-card-grid">
       ${rows.map(item => {
         const st = item.status || 'active';
+        const complete = isFieldsComplete(item);
         return `
-        <article class="notice-card status-${esc(st)}" data-url="${esc(item.url)}" title="${esc(item.title)}">
+        <article class="notice-card status-${esc(st)}${complete ? '' : ' fields-incomplete'}" data-url="${esc(item.url)}" title="${esc(item.title)}">
           <header class="notice-card-head">
-            <h3 class="notice-card-school">${esc(item.university)} - ${esc(item.college)}</h3>
+            <h3 class="notice-card-school">${esc(item.university)} - ${esc(item.college)}${complete ? '' : ' <span class="field-badge warn">缺字段</span>'}</h3>
             <p class="notice-card-title">${esc(item.title)}</p>
           </header>
           <dl class="notice-card-fields">
@@ -142,7 +223,7 @@ function renderNoticeCards(items) {
             </div>
             <div class="notice-field">
               <dt>截止提交</dt>
-              <dd class="${item.deadline ? '' : 'is-empty'}">${esc(fmtDateTime(item.deadline))}</dd>
+              <dd class="${item.deadline ? '' : 'is-empty'}">${esc(fmtDateTime(item.deadline))} ${deadlineCountdown(item.deadline)}</dd>
             </div>
             <div class="notice-field notice-field-wide">
               <dt>举办时间</dt>
@@ -154,6 +235,7 @@ function renderNoticeCards(items) {
             </div>
           </dl>
           <footer class="notice-card-foot">
+            ${sourceBadge(item)}
             <span class="link-hint">查看原文 →</span>
           </footer>
         </article>`;
@@ -239,10 +321,9 @@ function initBoardUI(boardId) {
     </div>
     <div class="filter-group">
       <label>数据来源</label>
-      <div class="chip-group" data-board="${boardId}" data-filter="source">
+      <div class="chip-group chip-group-source" data-board="${boardId}" data-filter="source">
         <button class="chip active" data-value="">全部</button>
-        <button class="chip" data-value="学院官网">学院官网</button>
-        <button class="chip" data-value="微信公众号">微信公众号</button>
+        ${SOURCE_OPTIONS.map(o => `<button class="chip" data-value="${o.id}">${o.label}</button>`).join('')}
       </div>
     </div>
     <div class="search-box">
@@ -264,30 +345,22 @@ async function loadBoard(boardId) {
   const bs = boardState[boardId];
   const p = cfg.prefix;
   const params = new URLSearchParams({ board: boardId, tier: bs.tier });
-  if (bs.status && bs.status !== 'all' && bs.status !== 'pending') {
-    params.set('status', bs.status);
-  }
+  if (bs.status && bs.status !== 'all') params.set('status', bs.status);
   if (bs.collegeType) params.set('college_type', bs.collegeType);
   if (bs.source) params.set('source', bs.source);
   if (bs.search) params.set('search', bs.search);
 
-  document.getElementById(`loading${p}`).style.display = 'block';
+  const loadingEl = document.getElementById(`loading${p}`);
+  const hasData = bs.stats && bs.data.length;
+  if (!hasData && loadingEl) loadingEl.style.display = 'block';
   try {
-    const stats = await fetchJSON(`/api/stats?board=${boardId}&tier=${encodeURIComponent(bs.tier)}`);
-    bs.stats = stats;
-    let announcements;
-    if (bs.status === 'pending') {
-      const pendingParams = new URLSearchParams({ board: boardId, tier: bs.tier });
-      if (bs.collegeType) pendingParams.set('college_type', bs.collegeType);
-      if (bs.search) pendingParams.set('search', bs.search);
-      announcements = await fetchJSON(`/api/pending?${pendingParams}`);
-    } else {
-      announcements = await fetchJSON(`/api/announcements?${params}`);
-    }
-    bs.data = announcements;
+    const payload = await fetchJSON(`/api/board?${params}`);
+    bs.stats = payload.stats;
+    bs.data = payload.items;
     renderBoard(boardId);
+    loadOpsAlerts();
   } finally {
-    document.getElementById(`loading${p}`).style.display = 'none';
+    if (loadingEl) loadingEl.style.display = 'none';
   }
 }
 
@@ -311,6 +384,14 @@ function renderBoard(boardId) {
     lu.textContent = bs.stats.last_crawl
       ? `[${bs.tier}] 上次更新：${new Date(bs.stats.last_crawl).toLocaleString('zh-CN')}`
       : `[${bs.tier}] 尚未检索`;
+    const srcEl = document.getElementById(`sourceStats${p}`);
+    if (srcEl && bs.stats.source_counts) {
+      const parts = SOURCE_OPTIONS
+        .map(o => ({ ...o, n: bs.stats.source_counts[o.id] || 0 }))
+        .filter(o => o.n > 0)
+        .map(o => `<span class="source-stat ${o.css}">${o.label} ${o.n}</span>`);
+      srcEl.innerHTML = parts.length ? parts.join('') : '';
+    }
   }
 
   const list = document.getElementById(`list${p}`);
@@ -326,10 +407,57 @@ function renderBoard(boardId) {
   }
   empty.style.display = 'none';
   const isPending = bs.status === 'pending';
-  list.innerHTML = isPending ? renderPendingCards(bs.data) : renderNoticeCards(bs.data);
+  const sortByDeadline = boardId === 'summer_camp' && bs.status === 'active';
+  list.innerHTML = isPending ? renderPendingCards(bs.data) : renderNoticeCards(bs.data, { sortByDeadline });
   list.querySelectorAll('.notice-card[data-url]').forEach(card => {
     card.addEventListener('click', () => openNoticeUrl(card.dataset.url));
   });
+}
+
+const crawlPollTimers = {
+  summer_camp: null,
+  pre_admission: null,
+};
+
+function clearCrawlPoll(boardId) {
+  if (crawlPollTimers[boardId]) {
+    clearTimeout(crawlPollTimers[boardId]);
+    crawlPollTimers[boardId] = null;
+  }
+}
+
+async function pollCrawlStatus(boardId) {
+  const cfg = BOARDS[boardId];
+  const p = cfg.prefix;
+  const tier = boardState[boardId].tier;
+  const btn = document.getElementById(`crawlBtn${p}`);
+  const icon = document.getElementById(`crawlIcon${p}`);
+
+  try {
+    const st = await fetchJSON(
+      `/api/crawl/status?board=${boardId}&tier=${encodeURIComponent(tier)}`,
+    );
+    if (st.running) {
+      const lu = document.getElementById(`lastUpdate${p}`);
+      if (lu && st.message) lu.textContent = st.message;
+      await loadBoard(boardId);
+      crawlPollTimers[boardId] = setTimeout(() => pollCrawlStatus(boardId), 1500);
+      return;
+    }
+    clearCrawlPoll(boardId);
+    await loadBoard(boardId);
+    if (st.last_result && st.last_result.message) {
+      showToast(st.last_result.message, 'success');
+    } else if (st.message) {
+      showToast(st.message, 'success');
+    }
+    if (btn) btn.disabled = false;
+    if (icon) icon.classList.remove('spinning');
+  } catch {
+    clearCrawlPoll(boardId);
+    if (btn) btn.disabled = false;
+    if (icon) icon.classList.remove('spinning');
+  }
 }
 
 async function triggerCrawl(boardId) {
@@ -338,55 +466,35 @@ async function triggerCrawl(boardId) {
   const tier = boardState[boardId].tier;
   const btn = document.getElementById(`crawlBtn${p}`);
   const icon = document.getElementById(`crawlIcon${p}`);
+  clearCrawlPoll(boardId);
   btn.disabled = true;
   if (icon) icon.classList.add('spinning');
-  showToast(`正在检索${cfg.label} · ${tier} 院校...`);
+  showToast(`正在刷新${cfg.label} · ${tier}（全网检索 + 详情补全）…`);
 
   try {
     const resp = await fetch(
-      apiUrl(`/api/crawl?board=${boardId}&tier=${encodeURIComponent(tier)}`),
+      apiUrl(
+        `/api/crawl?board=${boardId}&tier=${encodeURIComponent(tier)}&refresh=true`,
+      ),
       { method: 'POST' },
     );
-    if (!resp.ok) throw new Error('失败');
-    const data = await resp.json();
-    showToast(data.message, 'success');
-
-    if (data.message && (data.message.includes('已全部检索完毕') || data.message.includes('数据库缓存'))) {
-      await loadBoard(boardId);
-      btn.disabled = false;
-      if (icon) icon.classList.remove('spinning');
-      return;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.message || '失败');
     }
-
-    const poll = async () => {
-      const st = await fetchJSON(
-        `/api/crawl/status?board=${boardId}&tier=${encodeURIComponent(tier)}`,
-      );
-      if (st.running) {
-        if (st.message) {
-          const lu = document.getElementById(`lastUpdate${p}`);
-          if (lu) lu.textContent = st.message;
-        }
-        await loadBoard(boardId);
-        setTimeout(poll, 3000);
-        return;
-      }
-      await loadBoard(boardId);
-      if (st.last_result && st.last_result.message) {
-        showToast(st.last_result.message, 'success');
-      }
-      btn.disabled = false;
-      if (icon) icon.classList.remove('spinning');
-    };
-    setTimeout(poll, 2000);
-  } catch {
-    showToast('更新失败', 'error');
+    showToast(data.message, 'success');
+    const lu = document.getElementById(`lastUpdate${p}`);
+    if (lu) lu.textContent = data.message;
+    crawlPollTimers[boardId] = setTimeout(() => pollCrawlStatus(boardId), 1200);
+  } catch (e) {
+    showToast(e.message === '失败' ? '更新失败' : e.message, 'error');
     btn.disabled = false;
     if (icon) icon.classList.remove('spinning');
   }
 }
 
-function switchPanel(panel) {
+function switchPanel(panel, { skipHash = false } = {}) {
+  if (!VALID_PANELS.has(panel)) panel = 'summer_camp';
   state.panel = panel;
   document.querySelectorAll('#mainTabs .main-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.panel === panel);
@@ -394,11 +502,25 @@ function switchPanel(panel) {
   document.getElementById('panelSummerCamp').style.display = panel === 'summer_camp' ? 'block' : 'none';
   document.getElementById('panelPreAdmission').style.display = panel === 'pre_admission' ? 'block' : 'none';
   document.getElementById('panelInstitutions').style.display = panel === 'institutions' ? 'block' : 'none';
+  const enrichEl = document.getElementById('panelFieldEnrich');
+  if (enrichEl) enrichEl.style.display = panel === 'field_enrich' ? 'block' : 'none';
   const submitPanel = document.getElementById('submitNoticePanel');
   if (submitPanel) {
     submitPanel.style.display = (panel === 'summer_camp' || panel === 'pre_admission') ? 'block' : 'none';
   }
-  if (panel === 'institutions' && !state.institutions) loadInstitutions();
+  if (panel === 'field_enrich') {
+    loadIncompleteList();
+    loadMissingExtendedList();
+    loadOpsAlerts();
+  } else if (panel === 'institutions') {
+    switchInstPanel(state.instSubPanel, { skipSave: true });
+    if (!state.institutions) loadInstitutions();
+  } else if (panel === 'summer_camp' || panel === 'pre_admission') {
+    loadBoard(panel).catch(() => {
+      showToast('加载失败，请确认服务已启动', 'error');
+    });
+  }
+  if (!skipHash) saveUiState();
 }
 
 function setupBoardFilters() {
@@ -438,7 +560,7 @@ function setupBoardFilters() {
 }
 
 /* ---- 院校名录（保留原有逻辑） ---- */
-function switchInstPanel(panel) {
+function switchInstPanel(panel, { skipSave = false } = {}) {
   state.instSubPanel = panel;
   document.querySelectorAll('.inst-panel-tabs .chip').forEach(c => {
     c.classList.toggle('active', c.dataset.instPanel === panel);
@@ -446,6 +568,7 @@ function switchInstPanel(panel) {
   document.getElementById('instPanelAll').style.display = panel === 'all' ? 'block' : 'none';
   document.getElementById('instPanelDfc').style.display = panel === 'dfc' ? 'block' : 'none';
   if (panel === 'dfc') loadDfc();
+  if (!skipSave) saveUiState();
 }
 
 async function loadDfc() {
@@ -617,6 +740,7 @@ function setupTierTabs() {
       boardState[boardId].tier = tab.dataset.tier;
       updateCrawlButton(boardId);
       loadBoard(boardId);
+      saveUiState();
     });
   });
 }
@@ -626,6 +750,7 @@ window.toggleDfcRegion = toggleDfcRegion;
 window.triggerCrawl = triggerCrawl;
 
 async function loadSubmitColleges() {
+  if (state.submitColleges.length) return;
   try {
     state.submitColleges = await fetchJSON('/api/submit/colleges');
     const sel = document.getElementById('submitCollege');
@@ -665,7 +790,7 @@ async function handleSubmitNotice(e) {
   state.submitLoading = true;
   btn.disabled = true;
   btn.textContent = '校验中…';
-  showSubmitResult('<div class="submit-progress"><div class="spinner"></div>正在校验官方链接并提取信息…</div>');
+  showSubmitResult('<div class="submit-progress"><div class="spinner"></div>正在抓取页面并提取信息…</div>');
 
   try {
     const resp = await fetch(apiUrl('/api/submit-notice'), {
@@ -717,6 +842,208 @@ async function handleSubmitNotice(e) {
 function setupSubmitForm() {
   const form = document.getElementById('submitNoticeForm');
   if (form) form.addEventListener('submit', handleSubmitNotice);
+  const sel = document.getElementById('submitCollege');
+  if (sel) sel.addEventListener('focus', () => { loadSubmitColleges(); }, { once: true });
+  const reloadBtn = document.getElementById('enrichReloadBtn');
+  if (reloadBtn) reloadBtn.addEventListener('click', () => {
+    loadIncompleteList();
+    loadMissingExtendedList();
+    loadOpsAlerts();
+  });
+  const llmBtn = document.getElementById('llmBatchBtn');
+  if (llmBtn) llmBtn.addEventListener('click', () => runLlmBatch());
+}
+
+async function loadOpsAlerts() {
+  const el = document.getElementById('opsAlerts');
+  if (!el || IS_GITHUB_PAGES) return;
+  try {
+    const data = await fetchJSON('/api/ops-health');
+    const alerts = data.alerts || [];
+    if (!alerts.length) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    el.style.display = 'flex';
+    el.innerHTML = alerts.map(a =>
+      `<div class="ops-alert" role="alert">${esc(a.message)}</div>`
+    ).join('');
+  } catch {
+    el.style.display = 'none';
+  }
+}
+
+async function loadMissingExtendedList() {
+  const list = document.getElementById('extendedList');
+  const summary = document.getElementById('extendedSummary');
+  if (!list) return;
+  try {
+    const rows = await fetchJSON('/api/missing-extended?limit=20');
+    if (summary) {
+      summary.textContent = rows.length ? `待处理 ${rows.length} 条` : '';
+    }
+    if (!rows.length) {
+      list.innerHTML = '<p class="enrich-empty">暂无待扩展补全记录</p>';
+      return;
+    }
+    list.innerHTML = rows.map(r => `
+      <article class="enrich-card" data-id="${r.id}">
+        <header>
+          <strong>${esc(r.university)} · ${esc(r.college)}</strong>
+          <span><a href="${esc(r.url)}" target="_blank" rel="noopener">原文 ↗</a></span>
+        </header>
+        <p class="enrich-title">${esc(r.title)}</p>
+        <p class="enrich-missing">id=${r.id} · 正文缓存 ${r.summary_len} 字 · ${esc(r.source)}</p>
+        <form class="extended-form" data-id="${r.id}">
+          <label>通知 URL（可选更新）
+            <input name="url" value="${esc(r.url)}" style="width:100%;margin-top:4px" />
+          </label>
+          <label>粘贴正文（反爬页必填）
+            <textarea name="summary" class="enrich-body-input" placeholder="从浏览器复制通知全文粘贴于此…"></textarea>
+          </label>
+          <div class="enrich-form-actions">
+            <button type="submit" class="btn btn-sm">保存正文</button>
+            <button type="button" class="btn btn-primary btn-sm ext-enrich-btn" data-id="${r.id}">扩展补全</button>
+          </div>
+        </form>
+      </article>
+    `).join('');
+    list.querySelectorAll('.extended-form').forEach(form => {
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const id = form.dataset.id;
+        const fd = new FormData(form);
+        const body = { summary: fd.get('summary'), url: fd.get('url') || undefined };
+        const resp = await fetch(apiUrl(`/api/announcements/${id}/fields`), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (resp.ok) {
+          showToast('正文已保存', 'success');
+          loadMissingExtendedList();
+        } else showToast('保存失败', 'error');
+      });
+    });
+    list.querySelectorAll('.ext-enrich-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const resp = await fetch(apiUrl(`/api/announcements/${btn.dataset.id}/extended-enrich`), { method: 'POST' });
+          const data = await resp.json().catch(() => ({}));
+          showToast(data.message || (resp.ok ? '完成' : '失败'), resp.ok ? 'success' : 'error');
+          loadMissingExtendedList();
+          loadOpsAlerts();
+        } finally { btn.disabled = false; }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = `<p class="enrich-empty">${esc(e.message)}</p>`;
+  }
+}
+
+async function loadIncompleteList() {
+  const list = document.getElementById('enrichList');
+  const loading = document.getElementById('enrichLoading');
+  const summary = document.getElementById('enrichSummary');
+  if (!list) return;
+  loading.style.display = 'block';
+  list.innerHTML = '';
+  try {
+    const rows = await fetchJSON('/api/incomplete');
+    const manualCount = rows.filter(r => r.needs_manual).length;
+    if (summary) {
+      summary.textContent = rows.length
+        ? `待补全 ${rows.length} 条${manualCount ? `（其中 ${manualCount} 条需人工）` : ''}`
+        : '全部四字段已齐全';
+      summary.className = 'enrich-summary';
+    }
+    if (!rows.length) {
+      list.innerHTML = '<p class="enrich-empty">暂无字段不全的通知 🎉</p>';
+      return;
+    }
+    list.innerHTML = rows.map(r => {
+      const manual = r.needs_manual;
+      const failHint = r.last_llm_failure ? `（LLM: ${r.last_llm_failure}×${r.llm_fail_count}）` : '';
+      return `
+      <article class="enrich-card${manual ? ' needs-manual' : ''}" data-id="${r.id}">
+        <header>
+          <strong>${esc(r.university)} · ${esc(r.college)}</strong>
+          <span>
+            ${manual ? '<span class="enrich-badge">需人工</span> ' : ''}
+            <a href="${esc(r.url)}" target="_blank" rel="noopener">原文 ↗</a>
+          </span>
+        </header>
+        <p class="enrich-title">${esc(r.title)}</p>
+        <p class="enrich-missing">缺：${esc(r.missing.join('、'))}${failHint ? ' ' + esc(failHint) : ''}</p>
+        <form class="enrich-form" data-id="${r.id}">
+          <label>开放 <input name="publish_date" value="${esc(r.publish_date || '')}" placeholder="2026-07-01" /></label>
+          <label>截止 <input name="deadline" value="${esc(r.deadline || '')}" placeholder="2026-07-15 23:59" /></label>
+          <label>举办 <input name="event_time" value="${esc(r.event_time || '')}" placeholder="8月5日至7日" /></label>
+          <label>形式 <select name="event_format">
+            <option value="">—</option>
+            <option value="线上" ${r.event_format === '线上' ? 'selected' : ''}>线上</option>
+            <option value="线下" ${r.event_format === '线下' ? 'selected' : ''}>线下</option>
+            <option value="线上线下" ${r.event_format === '线上线下' ? 'selected' : ''}>线上线下</option>
+          </select></label>
+          <div class="enrich-form-actions">
+            <button type="submit" class="btn btn-primary btn-sm">保存</button>
+            ${manual ? '' : '<button type="button" class="btn btn-sm llm-one-btn" data-id="' + r.id + '">LLM 试一次</button>'}
+          </div>
+        </form>
+      </article>`;
+    }).join('');
+    list.querySelectorAll('.enrich-form').forEach(form => {
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const id = form.dataset.id;
+        const fd = new FormData(form);
+        const body = Object.fromEntries(fd.entries());
+        const resp = await fetch(apiUrl(`/api/announcements/${id}/fields`), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (resp.ok) {
+          showToast('已保存并标记用户补全保护', 'success');
+          loadIncompleteList();
+        } else showToast('保存失败', 'error');
+      });
+    });
+    list.querySelectorAll('.llm-one-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const resp = await fetch(apiUrl(`/api/announcements/${btn.dataset.id}/llm-enrich`), { method: 'POST' });
+          const data = await resp.json().catch(() => ({}));
+          if (resp.ok) {
+            showToast(data.message || 'LLM 完成', 'success');
+            loadIncompleteList();
+          } else showToast(data.detail || 'LLM 失败（请检查 API 配置）', 'error');
+        } finally { btn.disabled = false; }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = `<p class="enrich-empty">${esc(e.message)}</p>`;
+  } finally {
+    loading.style.display = 'none';
+  }
+}
+
+async function runLlmBatch() {
+  const btn = document.getElementById('llmBatchBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch(apiUrl('/api/announcements/llm-enrich-batch?limit=30'), { method: 'POST' });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.ok) {
+      showToast(`已处理 ${data.processed} 条，${data.fields_complete} 条四字段齐全`, 'success');
+      loadIncompleteList();
+    } else showToast(typeof data.detail === 'string' ? data.detail : 'LLM 未启用', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -724,14 +1051,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const banner = document.getElementById('pagesBanner');
     if (banner) banner.style.display = 'block';
   }
+  const saved = readUiState();
+  applyStoredUiState(saved);
   initBoardUI('summer_camp');
   initBoardUI('pre_admission');
   setupFilters();
   setupSubmitForm();
-  loadSubmitColleges();
-  switchPanel('summer_camp');
-  Promise.all([loadBoard('summer_camp'), loadBoard('pre_admission')]).catch(() => {
-    showToast('加载失败，请确认服务已启动', 'error');
+  switchPanel(saved.panel, { skipHash: true });
+  saveUiState();
+  loadOpsAlerts();
+  window.addEventListener('hashchange', () => {
+    const p = location.hash.replace(/^#/, '');
+    if (VALID_PANELS.has(p) && p !== state.panel) {
+      switchPanel(p, { skipHash: true });
+      saveUiState();
+    }
   });
   setInterval(() => {
     if (state.panel === 'summer_camp') loadBoard('summer_camp');

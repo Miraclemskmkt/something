@@ -18,6 +18,7 @@ class AnnouncementOut(BaseModel):
     event_time: Optional[str] = None
     event_format: Optional[str] = None
     source: str
+    source_category: str = ""
     summary: Optional[str] = None
     updated_at: datetime
 
@@ -37,6 +38,7 @@ class StatsOut(BaseModel):
     universities_count: int
     official_count: int = 0
     wechat_count: int = 0
+    source_counts: dict[str, int] = {}
 
 
 class PendingOut(BaseModel):
@@ -45,6 +47,10 @@ class PendingOut(BaseModel):
     college: str
     college_type: str
     status: str = "pending"
+    pending_kind: str = "not_published"
+    pending_kind_label: str = "暂未发布"
+    domain_status: Optional[str] = None
+    next_check_at: Optional[datetime] = None
     title: str
     event_type: str
     source: str = "检索记录"
@@ -53,6 +59,11 @@ class PendingOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class BoardOut(BaseModel):
+    stats: StatsOut
+    items: list[AnnouncementOut | PendingOut]
 
 
 class CrawlResult(BaseModel):
@@ -83,6 +94,41 @@ class SubmitNoticeOut(BaseModel):
     ok: bool
     message: str
     is_new: bool = False
+    announcement: AnnouncementOut | None = None
+
+
+class IncompleteAnnouncementOut(BaseModel):
+    id: int
+    university: str
+    college: str
+    college_type: str
+    title: str
+    url: str
+    publish_date: Optional[str] = None
+    deadline: Optional[str] = None
+    event_time: Optional[str] = None
+    event_format: Optional[str] = None
+    missing: list[str]
+    fields_complete: bool = False
+    source: str = ""
+    needs_manual: bool = False
+    llm_fail_count: int = 0
+    last_llm_failure: Optional[str] = None
+
+
+class FieldsPatchIn(BaseModel):
+    publish_date: Optional[str] = None
+    deadline: Optional[str] = None
+    event_time: Optional[str] = None
+    event_format: Optional[str] = None
+    summary: Optional[str] = None
+    url: Optional[str] = None
+
+
+class LlmEnrichResult(BaseModel):
+    ok: bool
+    message: str
+    fields_complete: bool = False
     announcement: AnnouncementOut | None = None
 
 

@@ -2,11 +2,11 @@
 import re
 from urllib.parse import urlparse
 
-from crawler.listing_resolver import is_listing_url
+from crawler.listing_resolver import is_listing_url, is_notice_page_url
 
 AGGREGATE_TITLE_HINTS = (
     "陆续更新", "夏令营信息", "信息汇总", "一览", "列表", "夏令营管理",
-    "招生简章汇总", "xlygs", "夏令营活动报名",
+    "招生简章汇总", "xlygs", "夏令营活动报名", "招生网", "夏令营-",
 )
 SECONDARY_DOC_HINTS = (
     "活动办法", "实施方案", "实施细则", "工作细则", "补充通知",
@@ -22,7 +22,7 @@ LOW_VALUE_TITLE_HINTS = (
 
 def is_pdf_url(url: str) -> bool:
     path = urlparse(url).path.lower()
-    return path.endswith(".pdf") or "/upload/files/" in path and ".pdf" in path
+    return path.endswith(".pdf") or ("/upload/files/" in path and ".pdf" in path)
 
 
 def is_aggregate_notice(title: str, url: str = "") -> bool:
@@ -77,7 +77,9 @@ def assess_notice_url(item, *, html: str | None = None) -> tuple[str, str]:
     if not url:
         return "bad", "无 URL"
     if is_pdf_url(url):
-        return "bad", "PDF 附件，无法解析正文"
+        if item.deadline or item.event_time:
+            return "ok", ""
+        return "ok", "PDF 通知"
     if is_recap_notice(title):
         return "bad", "活动回顾，非招生通知"
     if is_stale_url(url):
@@ -85,8 +87,12 @@ def assess_notice_url(item, *, html: str | None = None) -> tuple[str, str]:
     if is_aggregate_notice(title, url):
         return "bad", "汇总/列表页，非单篇通知"
     if is_secondary_doc(title) and not item.deadline:
+        if is_notice_page_url(url) and any(k in title for k in ("夏令营", "预推免", "推免")):
+            return "ok", ""
         return "suspicious", "附属文档，可能缺少截止时间"
     if any(h in title for h in LOW_VALUE_TITLE_HINTS) and not item.deadline:
+        if is_notice_page_url(url) and any(k in title for k in ("夏令营", "预推免", "推免")):
+            return "ok", ""
         return "suspicious", "指南类页面，可能非正式通知"
     if html is not None:
         if "截止" not in html and "报名" in html and not item.deadline:
@@ -115,7 +121,13 @@ def score_notice_candidate(
     url = cand.url or ""
     snippet = cand.summary or ""
 
-    if is_pdf_url(url) or is_listing_url(url):
+    if is_pdf_url(url):
+        if "夏令营" in title or "预推免" in title:
+            score += 2.0
+        if cand.deadline:
+            score += 6.0
+        return score
+    if is_listing_url(url):
         return -100.0
     if is_recap_notice(title) or is_stale_url(url):
         return -50.0
@@ -133,9 +145,9 @@ def score_notice_candidate(
     if "优秀大学生" in title:
         score += 2.0
     if is_secondary_doc(title):
-        score -= 3.0
+        score -= 3.0 if not is_notice_page_url(url) else 0.0
     if any(h in title for h in LOW_VALUE_TITLE_HINTS):
-        score -= 2.0
+        score -= 2.0 if not is_notice_page_url(url) else 0.0
 
     combined = f"{title} {snippet}"
     if "截止" in combined or "截至" in combined:
@@ -146,4 +158,31 @@ def score_notice_candidate(
         score += 6.0
     if url == item.url:
         score -= 1.0
+    return score
+
+
+def score_search_hit(item, target) -> float:
+    """检索结果排序：优先学院域、含截止时间的详情页。"""
+    ref = type("_Ref", (), {
+        "university": target.university,
+        "college": target.college,
+        "url": "",
+    })()
+    score = score_notice_candidate(item, ref)
+    title = item.title or ""
+    url = item.url or ""
+
+    if target.university in title:
+        score += 4.0
+    if target.college and target.college[:2] in title:
+        score += 3.0
+    if target.base_url:
+        from urllib.parse import urlparse
+        host = urlparse(target.base_url).netloc.lower()
+        if host and host.replace("www.", "") in url.lower():
+            score += 6.0
+    if "通知" in title and "夏令营" in title:
+        score += 2.0
+    if item.summary and ("截止" in item.summary or "截至" in item.summary):
+        score += 5.0
     return score

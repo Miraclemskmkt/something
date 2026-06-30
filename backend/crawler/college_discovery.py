@@ -9,6 +9,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from config import settings
+from crawler.fetcher import create_http_client
 
 LAW_HINTS = ("法学院", "法学", "法律", "政法", "国际法", "凯原法学", "光华法学", "王健法学")
 FOREIGN_HINTS = ("外国语", "外语", "外文", "英语学院", "翻译", "语言文化")
@@ -167,11 +168,7 @@ async def probe_all(universities, college_types=("law", "foreign_lang"), limit: 
     targets = universities[:limit] if limit else universities
     results: list[CollegeProbeResult] = []
 
-    headers = {"User-Agent": settings.user_agent}
-
-    async with httpx.AsyncClient(
-        timeout=12, follow_redirects=True, headers=headers, verify=False
-    ) as client:
+    async with create_http_client(timeout=12) as client:
         async def one(uni, ct):
             async with sem:
                 return await probe_university(client, uni.name, uni.url, ct)

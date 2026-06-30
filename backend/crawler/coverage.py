@@ -1,8 +1,10 @@
 """学院检索覆盖状态：已找到的通知类型不再重复爬取。"""
 
 import logging
+import threading
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config import settings
@@ -12,9 +14,12 @@ from crawler.boards import (
     SUMMER_CAMP,
     classify_slot,
 )
+from crawler.source_labels import is_official_source, is_wechat_source
 from models import Announcement, CrawlCoverage
 
 logger = logging.getLogger(__name__)
+
+_db_write_lock = threading.Lock()
 
 
 def _slot_for_phase(board: str, phase: str) -> str:
@@ -37,7 +42,9 @@ def colleges_with_official_slot(db: Session, board: str, phase: str) -> set[tupl
     """数据库中已有学院官网来源、且对应当前检索槽位的学院。"""
     slot = _slot_for_phase(board, phase)
     keys: set[tuple[str, str, str]] = set()
-    for ann in db.query(Announcement).filter(Announcement.source == "学院官网").all():
+    for ann in db.query(Announcement).all():
+        if not is_official_source(ann.source):
+            continue
         if classify_slot(ann.title, ann.event_type, ann.status) == slot:
             keys.add((ann.university, ann.college, ann.college_type))
     return keys
@@ -50,24 +57,61 @@ def filter_wechat_targets(
     phase: str,
     official_hits_this_run: set[tuple[str, str, str]],
 ) -> list:
-    """官网本轮或历史已收录的学院，不再检索微信公众号。"""
+    """
+    搜狗微信搜索目标筛选：
+    - 官网已收录 → 跳过
+    - pending_only 模式 → 仅待定/域名失败学院
+    - 已有微信公众号来源 → 跳过
+    - 今日已搜狗 → 跳过
+    """
     if not settings.wechat_enabled:
         return []
 
+    from crawler.wechat_state import college_searched_today
+    from models import CollegePending
+
     db_official = colleges_with_official_slot(db, board, phase)
+    db_wechat = colleges_with_wechat_slot(db, board, phase)
+
+    pending_keys: set[tuple[str, str, str]] = set()
+    if settings.wechat_pending_only:
+        slot = _slot_for_phase(board, phase)
+        for p in db.query(CollegePending).filter_by(slot=slot).all():
+            pending_keys.add((p.university, p.college, p.college_type))
+
     result = []
     for t in targets:
         key = (t.university, t.college, t.college_type)
         if key in official_hits_this_run or key in db_official:
             continue
+        if key in db_wechat:
+            continue
+        if settings.wechat_pending_only and pending_keys and key not in pending_keys:
+            continue
+        if college_searched_today(t.university, t.college):
+            continue
         result.append(t)
+
     skipped = len(targets) - len(result)
     if skipped:
         logger.info(
-            "微信检索：跳过 %d 个官网已收录学院，待搜微信 %d 个",
+            "搜狗微信：跳过 %d 个（官网/已有微信/非待定/今日已搜），待搜 %d 个",
             skipped, len(result),
         )
     return result
+
+
+def colleges_with_wechat_slot(db: Session, board: str, phase: str) -> set[tuple[str, str, str]]:
+    """已有微信公众号来源通知的学院。"""
+    slot = _slot_for_phase(board, phase)
+    keys: set[tuple[str, str, str]] = set()
+    for ann in db.query(Announcement).all():
+        if not is_wechat_source(ann.source):
+            continue
+        from crawler.boards import classify_slot
+        if classify_slot(ann.title, ann.event_type, ann.status) == slot:
+            keys.add((ann.university, ann.college, ann.college_type))
+    return keys
 
 
 def sync_coverage_from_announcements(db: Session) -> None:
@@ -105,6 +149,17 @@ def _upsert_coverage(
             announcement_id=announcement_id,
             updated_at=now,
         ))
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            existing = db.query(CrawlCoverage).filter_by(
+                university=university, college=college, college_type=college_type, slot=slot,
+            ).first()
+            if existing:
+                existing.updated_at = now
+                if not touch_only and announcement_id is not None:
+                    existing.announcement_id = announcement_id
 
 
 def mark_target_searched(db: Session, target, board: str, phase: str) -> None:
@@ -181,3 +236,35 @@ def filter_targets_for_phase(targets: list, covered: set, board: str, phase: str
         t for t in targets
         if (t.university, t.college, t.college_type, slot) not in covered
     ]
+
+
+def notice_slot_for_board(board: str) -> str:
+    return _slot_for_phase(board, "notice")
+
+
+def clear_tier_board_coverage(
+    db: Session,
+    tier: str | None,
+    board: str,
+    *,
+    phases: tuple[str, ...] = ("notice",),
+) -> tuple[int, int]:
+    """清除某分层在某板块下的检索覆盖与待定记录，用于网页「刷新检索」。tier=None 表示全部。"""
+    from models import CollegePending
+    from tier_filter import universities_in_tier
+
+    tier_unis = list(universities_in_tier(tier)) if tier else None
+    slots = [_slot_for_phase(board, p) for p in phases]
+    cov_q = db.query(CrawlCoverage).filter(CrawlCoverage.slot.in_(slots))
+    pend_q = db.query(CollegePending).filter(CollegePending.slot.in_(slots))
+    if tier_unis is not None:
+        cov_q = cov_q.filter(CrawlCoverage.university.in_(tier_unis))
+        pend_q = pend_q.filter(CollegePending.university.in_(tier_unis))
+    cov_del = cov_q.delete(synchronize_session=False)
+    pend_del = pend_q.delete(synchronize_session=False)
+    db.commit()
+    logger.info(
+        "已清除 %s · %s 覆盖 %d 条、待定 %d 条（阶段 %s）",
+        tier or "全部", board, cov_del, pend_del, phases,
+    )
+    return cov_del, pend_del

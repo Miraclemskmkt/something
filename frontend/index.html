@@ -20,13 +20,9 @@
 
   <title>保研夏令营检索平台 | 法学院 & 外国语学院</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="/style.css" id="app-css">
 
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-  <link rel="stylesheet" id="app-css">
-
-  <script>document.getElementById('app-css').href = window.__ASSET_BASE__ + 'style.css';</script>
+  <script>if (window.__ASSET_BASE__ !== '/') document.getElementById('app-css').href = window.__ASSET_BASE__ + 'style.css';</script>
 
 </head>
 
@@ -50,7 +46,7 @@
 
           <h1>保研夏令营检索平台</h1>
 
-          <p class="subtitle">学院官网 · 微信公众号 · 仅2026年及以后</p>
+          <p class="subtitle">六类来源 · 学院官网 / 微信 / 论坛 / 检索 / 提交 / 补全 · 仅2026年</p>
 
         </div>
 
@@ -64,6 +60,8 @@
 
   <main class="container main-content">
 
+    <div id="opsAlerts" class="ops-alerts" style="display:none" aria-live="polite"></div>
+
     <div class="main-tabs" id="mainTabs">
 
       <button class="main-tab active" data-panel="summer_camp">夏令营</button>
@@ -71,6 +69,8 @@
       <button class="main-tab" data-panel="pre_admission">预推免</button>
 
       <button class="main-tab" data-panel="institutions">院校名录</button>
+
+      <button class="main-tab" data-panel="field_enrich">字段补全</button>
 
     </div>
 
@@ -86,7 +86,7 @@
 
           <h2>提交通知链接</h2>
 
-          <p>粘贴某学院官网发布的夏令营/预推免通知地址，平台将先校验是否为官方 edu.cn 链接，再自动提取时间等信息并收录。</p>
+          <p>粘贴官网或微信公众号链接提交。来源会标记为「用户提交」（与自动抓取的官网/微信通道区分）。</p>
 
         </div>
 
@@ -108,13 +108,13 @@
 
             <label for="submitUrl">通知链接</label>
 
-            <input id="submitUrl" type="url" required placeholder="https://law.xxx.edu.cn/..." />
+            <input id="submitUrl" type="url" required placeholder="https://law.xxx.edu.cn/... 或 https://mp.weixin.qq.com/s/..." />
 
             <button type="submit" class="btn btn-primary" id="submitNoticeBtn">校验并收录</button>
 
           </div>
 
-          <p class="submit-hint">须为学院或学校官网（*.edu.cn）上的通知正文页，汇总页/PDF/非招生通知可能无法通过校验。</p>
+          <p class="submit-hint">支持两类链接：① 学院/学校官网（*.edu.cn）通知页或 PDF；② 微信公众号文章（mp.weixin.qq.com/s/…）。微信链接会自动抓取正文并标为「微信公众号」。</p>
 
         </form>
 
@@ -138,13 +138,14 @@
 
         <button class="btn btn-primary" id="crawlBtnSummer" onclick="triggerCrawl('summer_camp')">
 
-          <span class="btn-icon crawl-icon" id="crawlIconSummer">↻</span> 检索985院校
+          <span class="btn-icon crawl-icon" id="crawlIconSummer">↻</span> 刷新检索985
 
         </button>
 
       </div>
 
       <div class="stats-grid board-stats" id="statsSummer"></div>
+      <div class="source-stats-bar" id="sourceStatsSummer"></div>
 
       <div class="filters" id="filtersSummer"></div>
 
@@ -172,13 +173,14 @@
 
         <button class="btn btn-primary" id="crawlBtnPre" onclick="triggerCrawl('pre_admission')">
 
-          <span class="btn-icon crawl-icon" id="crawlIconPre">↻</span> 检索985院校
+          <span class="btn-icon crawl-icon" id="crawlIconPre">↻</span> 刷新检索985
 
         </button>
 
       </div>
 
       <div class="stats-grid board-stats" id="statsPre"></div>
+      <div class="source-stats-bar" id="sourceStatsPre"></div>
 
       <div class="filters" id="filtersPre"></div>
 
@@ -189,6 +191,46 @@
       <div id="emptyPre" class="empty-state" style="display:none"><p>暂无预推免通知</p></div>
 
       <div id="listPre" class="announcement-list"></div>
+
+    </section>
+
+
+
+    <!-- 字段补全（人工 + LLM） -->
+
+    <section id="panelFieldEnrich" style="display:none">
+
+      <div class="enrich-panel">
+
+        <div class="enrich-head">
+
+          <h2>字段补全</h2>
+
+          <p id="enrichSummary">加载中…</p>
+
+          <p class="enrich-hint">四字段不全的在下方；官网反爬导致 LLM 失败的，可在「扩展补全」区粘贴正文后点扩展补全。</p>
+
+          <div class="enrich-actions">
+
+            <button type="button" class="btn btn-primary" id="llmBatchBtn">LLM 批量补全</button>
+
+            <button type="button" class="btn" id="enrichReloadBtn">刷新列表</button>
+
+          </div>
+
+        </div>
+
+        <div class="enrich-subsection">
+          <h3>扩展补全 <span id="extendedSummary" class="enrich-sub-summary"></span></h3>
+          <p class="enrich-hint">四字段已齐、缺扩展信息的通知（如 id 6/8/9）。粘贴网页正文 → 保存 → 扩展补全。</p>
+          <div id="extendedList" class="enrich-list"></div>
+        </div>
+
+        <div id="enrichLoading" class="loading-state" style="display:none"><div class="spinner"></div></div>
+
+        <div id="enrichList" class="enrich-list"></div>
+
+      </div>
 
     </section>
 
@@ -374,7 +416,7 @@
 
     <div class="container">
 
-      <p>已收录的通知下次检索自动跳过 · 各板块独立刷新</p>
+      <p>点击「刷新检索」将重新全网搜索并补全开放/截止/举办时间与形式 · 检索进行中列表自动更新</p>
 
       <p class="footer-note">链接直达学院官网或微信原文，请以官方发布为准</p>
 
@@ -386,9 +428,9 @@
 
   <div id="toast" class="toast"></div>
 
-  <script id="app-js"></script>
+  <script src="/app.js" defer id="app-js"></script>
 
-  <script>document.getElementById('app-js').src = window.__ASSET_BASE__ + 'app.js';</script>
+  <script>if (window.__ASSET_BASE__ !== '/') document.getElementById('app-js').src = window.__ASSET_BASE__ + 'app.js';</script>
 
 </body>
 

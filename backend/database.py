@@ -28,13 +28,14 @@ def get_db():
         db.close()
 
 
-def init_db():
+def init_db(*, sync_coverage: bool = False):
     from models import Announcement, CollegePending, CrawlCoverage, CrawlLog  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _migrate_sqlite()
     _cleanup_stale_crawl_logs()
-    _sync_coverage_cache()
+    if sync_coverage:
+        _sync_coverage_cache()
 
 
 def _sync_coverage_cache():
@@ -83,6 +84,11 @@ def _migrate_sqlite():
         "announcements": {
             "event_time": "VARCHAR(200)",
             "event_format": "VARCHAR(20)",
+        },
+        "college_pending": {
+            "pending_kind": "VARCHAR(30) DEFAULT 'not_published'",
+            "domain_status": "VARCHAR(20)",
+            "next_check_at": "DATETIME",
         },
     }
     with engine.begin() as conn:

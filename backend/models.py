@@ -78,6 +78,9 @@ class CollegePending(Base):
     college_type: Mapped[str] = mapped_column(String(50), nullable=False)
     slot: Mapped[str] = mapped_column(String(50), nullable=False)
     search_count: Mapped[int] = mapped_column(default=1)
+    pending_kind: Mapped[str] = mapped_column(String(30), default="not_published")
+    domain_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

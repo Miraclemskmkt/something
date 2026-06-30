@@ -10,3 +10,8 @@ pydantic==2.10.3
 pydantic-settings==2.6.1
 # 可选：应对 JS 反爬/WAF，安装后执行 playwright install chromium
 playwright==1.49.1
+pypdf==5.1.0
+pdfplumber==0.11.4
+python-docx==1.1.2
+openpyxl==3.1.5
+# 扫描件 PDF 多模态（可选）: pip install pymupdf

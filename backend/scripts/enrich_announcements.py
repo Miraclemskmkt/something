@@ -9,6 +9,7 @@ import httpx
 
 from config import settings
 from crawler.detail_enricher import enrich_announcement, infer_board_from_item
+from crawler.fetcher import create_http_client
 from crawler.listing_resolver import is_listing_url
 from crawler.parser import ParsedAnnouncement, extract_date_from_url
 from database import SessionLocal, init_db
@@ -46,7 +47,7 @@ async def enrich_one(
     )
     board = infer_board_from_item(item)
     changed = False
-    await enrich_announcement(item, board=board, phase="notice", client=client)
+    await enrich_announcement(item, board=board, phase="notice", client=client, mode="full")
 
     if is_listing_url(item.url) and not item.deadline:
         from crawler.url_quality import assess_notice_url
@@ -97,18 +98,12 @@ async def enrich_one(
 
 
 async def main() -> None:
-    init_db()
+    init_db(sync_coverage=True)
     db = SessionLocal()
-    headers = {"User-Agent": settings.user_agent}
     try:
         rows = db.query(Announcement).order_by(Announcement.university).all()
         updated = 0
-        async with httpx.AsyncClient(
-            timeout=settings.request_timeout,
-            follow_redirects=True,
-            headers=headers,
-            verify=False,
-        ) as client:
+        async with create_http_client() as client:
             for ann in rows:
                 if await enrich_one(ann, client, db, force=True):
                     updated += 1

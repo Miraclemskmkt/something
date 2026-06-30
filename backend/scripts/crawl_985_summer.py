@@ -20,7 +20,7 @@ def get_985_targets():
 
 
 async def main():
-    init_db()
+    init_db(sync_coverage=True)
     settings.search_max_per_target = 3
     settings.search_compact_keywords = False
 

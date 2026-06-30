@@ -37,7 +37,9 @@ def university_in_tier(university: str, tier: str) -> bool:
     return UNIVERSITY_TIER.get(university) == tier
 
 
-def filter_targets_by_tier(targets: list, tier: str) -> list:
+def filter_targets_by_tier(targets: list, tier: str | None) -> list:
+    if not tier or tier == "all":
+        return list(targets)
     allowed = universities_in_tier(tier)
     return [t for t in targets if t.university in allowed]
 

@@ -1,101 +1,139 @@
-"""HTTP 抓取：浏览器头、会话 Referer、反爬检测。"""
+"""HTTP 抓取：浏览器头、会话 Referer、反爬检测与重试。"""
+import asyncio
 import logging
-from urllib.parse import urlparse
 
 import httpx
-from bs4 import BeautifulSoup
 
 from config import settings
+from crawler.anti_crawl import (
+    browser_headers,
+    create_http_client,
+    domain_of,
+    is_blocked_html,
+    is_retryable_status,
+    prefers_mobile_first,
+    request_jitter,
+    retry_delay,
+    site_root,
+)
 
 logger = logging.getLogger(__name__)
 
-BLOCKED_MARKERS = (
-    "$_ts",
-    "vwoNTa",
-    "antispider",
-    "验证码",
-    "challenge-platform",
-    "请开启JavaScript",
-    "enable JavaScript",
-)
+__all__ = [
+    "browser_headers",
+    "create_http_client",
+    "fetch_page",
+    "is_blocked_html",
+    "site_root",
+]
 
-MOBILE_UA = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
-)
+_warmed_hosts: set[str] = set()
 
 
-def site_root(url: str) -> str:
-    parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
-        return url
-    return f"{parsed.scheme}://{parsed.netloc}/"
-
-
-def browser_headers(url: str, *, referer: str | None = None, mobile: bool = False) -> dict[str, str]:
-    return {
-        "User-Agent": MOBILE_UA if mobile else settings.user_agent,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Referer": referer or site_root(url),
-    }
-
-
-def is_blocked_html(html: str | None) -> bool:
-    """页面是否被 WAF/JS 挑战拦截或几乎无正文。"""
-    if not html or len(html) < 200:
-        return True
-    head = html[:12000]
-    if any(marker in head for marker in BLOCKED_MARKERS):
-        return True
+async def _fetch_once(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    mobile: bool,
+    fast: bool,
+) -> str | None:
+    root = site_root(url)
+    host = domain_of(url)
     try:
-        text = BeautifulSoup(html, "lxml").get_text(strip=True)
-    except Exception:
-        return True
-    return len(text) < 80
+        if not fast and host not in _warmed_hosts:
+            await client.get(root, headers=browser_headers(root, mobile=mobile))
+            _warmed_hosts.add(host)
+        resp = await client.get(
+            url,
+            headers=browser_headers(url, referer=root, mobile=mobile),
+        )
+        if not (200 <= resp.status_code < 400) and not is_retryable_status(resp.status_code):
+            return None
+        resp.encoding = resp.charset_encoding or "utf-8"
+        text = resp.text
+        if text and not is_blocked_html(text):
+            return text
+        if is_retryable_status(resp.status_code):
+            logger.debug("Retryable status %s for %s", resp.status_code, url[:80])
+    except Exception as e:
+        logger.debug("Fetch error %s: %s", url, e)
+    return None
 
 
-async def fetch_page(url: str, *, client: httpx.AsyncClient | None = None) -> str | None:
-    """抓取页面；先带 Referer 会话访问，失败再试移动 UA。"""
+async def _fetch_page_impl(
+    url: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    allow_playwright: bool = True,
+    fast: bool | None = None,
+) -> str | None:
     if not url or not url.startswith("http"):
         return None
 
-    async def _get(c: httpx.AsyncClient, mobile: bool = False) -> str | None:
-        try:
-            root = site_root(url)
-            await c.get(root, headers=browser_headers(root))
-            resp = await c.get(url, headers=browser_headers(url, referer=root, mobile=mobile))
-            if 200 <= resp.status_code < 400:
-                resp.encoding = resp.charset_encoding or "utf-8"
-                text = resp.text
-                if not is_blocked_html(text):
+    from crawler.url_quality import is_pdf_url
+
+    if is_pdf_url(url):
+        from crawler.pdf_extractor import fetch_pdf_text
+
+        return await fetch_pdf_text(url, client=client)
+
+    if fast is None:
+        fast = settings.crawl_fast_mode
+
+    attempts = 1 if fast else max(1, settings.fetch_retry_count + 1)
+    if prefers_mobile_first(url):
+        order = (True, False) if not fast else (True,)
+    else:
+        order = (False, True) if not fast else (False,)
+
+    async def _run(c: httpx.AsyncClient) -> str | None:
+        for attempt in range(attempts):
+            if attempt and not fast:
+                await retry_delay(attempt - 1)
+            elif not fast:
+                await request_jitter()
+
+            for mobile in order:
+                text = await _fetch_once(c, url, mobile=mobile, fast=fast)
+                if text:
                     return text
-        except Exception as e:
-            logger.debug("Fetch error %s: %s", url, e)
+                if not fast:
+                    await request_jitter()
         return None
 
+    text: str | None = None
     if client is not None:
-        text = await _get(client, mobile=False)
-        if text:
-            return text
-        text = await _get(client, mobile=True)
-        if text:
-            return text
+        text = await _run(client)
     else:
-        timeout = settings.request_timeout
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=False) as c:
-            text = await _get(c, mobile=False)
-            if text:
-                return text
-            text = await _get(c, mobile=True)
-            if text:
-                return text
+        async with create_http_client() as c:
+            text = await _run(c)
 
-    if settings.playwright_enabled:
+    if text:
+        return text
+
+    if allow_playwright and settings.playwright_enabled and not fast:
         from crawler.playwright_fetcher import fetch_with_playwright
 
         return await fetch_with_playwright(url)
     return None
+
+
+async def fetch_page(
+    url: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    allow_playwright: bool = True,
+    fast: bool | None = None,
+) -> str | None:
+    """抓取页面：Referer 预热 → 桌面/移动 UA → 重试 → Playwright（可选）。"""
+    timeout = settings.fetch_page_timeout
+    try:
+        return await asyncio.wait_for(
+            _fetch_page_impl(
+                url, client=client, allow_playwright=allow_playwright, fast=fast,
+            ),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.debug("页面抓取超时 (%ds): %s", timeout, url[:80])
+        return None

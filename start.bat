@@ -12,10 +12,22 @@ if not exist "venv" (
     python -m venv venv
 )
 
-echo [2/3] 安装依赖...
 call venv\Scripts\activate.bat
-pip install -r requirements.txt -q
 
+set "REQ_HASH="
+for /f "delims=" %%h in ('certutil -hashfile requirements.txt MD5 ^| findstr /v "hash MD5"') do set "REQ_HASH=%%h"
+if not exist ".deps_ok" goto install_deps
+set /p OLD_HASH=<.deps_ok
+if not "%OLD_HASH%"=="%REQ_HASH%" goto install_deps
+echo [2/3] 依赖已就绪，跳过安装
+goto start_server
+
+:install_deps
+echo [2/3] 安装依赖...
+pip install -r requirements.txt -q
+echo %REQ_HASH%> .deps_ok
+
+:start_server
 echo [3/3] 启动服务...
 echo.
 echo   访问地址: http://127.0.0.1:8000
@@ -23,4 +35,4 @@ echo   API 文档: http://127.0.0.1:8000/docs
 echo   按 Ctrl+C 停止服务
 echo.
 
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8000

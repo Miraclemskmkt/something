@@ -10,14 +10,44 @@ from crawler.parser import ParsedAnnouncement, is_valid_announcement_url, normal
 # URL 特征：多为公示/列表入口，而非单篇通知
 LISTING_URL_RE = re.compile(
     r"(?:xlygs|xlygl|/list(?:/|\.|$)|default\.aspx|index\.htm?$|/xxgs/|"
-    r"/tzgg/index|/notice/?$|/news/?$|/info/?$)",
+    r"/tzgg/index|/notice/?$|/news/?$|/info/?$|/xly/?$|/sss/xly)",
     re.I,
 )
 
 LISTING_TITLE_HINTS = ("公示", "列表", "汇总", "一览", "通知公告", "夏令营管理", "招生简章")
 
-# 详情页常见路径
-DETAIL_URL_RE = re.compile(r"/info/\d+/\d+\.(?:htm|html|shtml)|/View/\d+|/Details/|/page\.htm", re.I)
+# 详情页常见路径（含 .htm / .html）
+DETAIL_URL_RE = re.compile(
+    r"/info/\d+/\d+\.(?:htm|html|shtml)"
+    r"|/View/\d+"
+    r"|/Details/"
+    r"|/page\.htm"
+    r"|/tongzhigonggao/\d{4}/\d+\.html?"
+    r"|/xw-tzgg/\d+/[\d]+\.html?"
+    r"|/b4/a2/c\d+a\d+/page\.htm"
+    r"|/\d{4}/\d{2}/\d+\.html?",
+    re.I,
+)
+
+NOTICE_PAGE_SUFFIX_RE = re.compile(r"\.(?:htm|html|shtml|asp|aspx|jsp|php)(?:\?|#|$)", re.I)
+
+
+def is_notice_page_url(url: str) -> bool:
+    """学院官网单篇通知页（含 .htm / .html），区别于 list.htm / index.htm 列表。"""
+    if not url:
+        return False
+    if DETAIL_URL_RE.search(url):
+        return True
+    if is_listing_url(url):
+        return False
+    path = urlparse(url).path.lower()
+    if not NOTICE_PAGE_SUFFIX_RE.search(path):
+        return False
+    if path.endswith("index.htm") or path.endswith("index.html"):
+        return False
+    if re.search(r"(?:^|/)list\.htm(?:l)?$", path) or "/list.htm" in path:
+        return False
+    return True
 
 
 def is_listing_url(url: str) -> bool:

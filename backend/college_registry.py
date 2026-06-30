@@ -70,7 +70,16 @@ MANUAL_URLS: dict[tuple[str, str], list[str]] = {
     ("天津大学", "law"): ["https://law.tju.edu.cn/xwzx/tzgg/index.htm"],
     ("天津大学", "foreign_lang"): ["https://sfl.tju.edu.cn/xwzx/tzgg/index.htm"],
     ("西安交通大学", "law"): ["https://law.xjtu.edu.cn/xwzx/tzgg/index.htm"],
-    ("西安交通大学", "foreign_lang"): ["https://sfl.xjtu.edu.cn/xwzx/tzgg/index.htm"],
+    ("西安交通大学", "foreign_lang"): ["https://sfs.xjtu.edu.cn/glfw/tzgg.htm"],
+    ("哈尔滨工业大学", "foreign_lang"): ["https://sfl.hit.edu.cn/xwzx/tzgg/index.htm"],
+    ("哈尔滨工程大学", "law"): [
+        "https://shss.hrbeu.edu.cn/9220/list.htm",
+        "https://shss.hrbeu.edu.cn/9224/list.htm",
+    ],
+    ("哈尔滨工程大学", "foreign_lang"): [
+        "https://fld.hrbeu.edu.cn/tzgg.htm",
+        "https://fld.hrbeu.edu.cn/info/1061/list.htm",
+    ],
     ("大连海事大学", "law"): ["https://law.dlmu.edu.cn/xwzx/tzgg/index.htm"],
     ("大连海事大学", "foreign_lang"): ["https://sfl.dlmu.edu.cn/xwzx/tzgg/index.htm"],
     ("中国海洋大学", "law"): ["https://law.ouc.edu.cn/xwzx/tzgg/index.htm"],
@@ -101,27 +110,47 @@ MANUAL_URLS: dict[tuple[str, str], list[str]] = {
     ("中央民族大学", "law"): ["https://law.muc.edu.cn/xwzx/tzgg/index.htm"],
     ("外交学院", "law"): ["https://law.cfau.edu.cn/xwzx/tzgg/index.htm"],
     ("外交学院", "foreign_lang"): ["https://english.cfau.edu.cn/xwzx/tzgg/index.htm"],
+    ("河南大学", "law"): [
+        "https://fxy.henu.edu.cn/xwzx/tzgg/index.htm",
+        "https://fxy.henu.edu.cn/info/1212/list.htm",
+    ],
+    ("宁波大学", "law"): [
+        "https://fxy.nbu.edu.cn/xwzx/tzgg/index.htm",
+        "https://fxy.nbu.edu.cn/zsxx.htm",
+    ],
+    ("山西大学", "law"): ["https://fxy.sxu.edu.cn/xwzx/tzgg/index.htm"],
+    ("黑龙江大学", "law"): ["https://fxy.hlju.edu.cn/xwgg/list.htm"],
+    ("黑龙江大学", "foreign_lang"): ["https://wwxy.hlju.edu.cn/xwzx/tzgg/index.htm"],
     ("上海外国语大学", "foreign_lang"): ["https://gs.shisu.edu.cn/tzgg/list.htm"],
     ("上海外国语大学", "law"): ["https://law.shisu.edu.cn/xwzx/tzgg/index.htm"],
 }
 
 
 def build_registry_entries() -> list[CollegeRegistryEntry]:
+    from crawler.domain_discovery import discovered_urls_map
+    from crawler.domain_overrides import get_homepage_override
+
+    discovered = discovered_urls_map()
     entries: list[CollegeRegistryEntry] = []
     for site in OFFICIAL_COLLEGE_SITES:
+        homepage = get_homepage_override(site.university, site.college, site.college_type) or site.homepage
         key = (site.university, site.college_type)
         if key in MANUAL_URLS:
-            urls = list(dict.fromkeys(MANUAL_URLS[key] + derive_news_urls(site.homepage)))
+            urls = list(dict.fromkeys(MANUAL_URLS[key] + derive_news_urls(homepage)))
             src = "manual"
         else:
-            urls = derive_news_urls(site.homepage)
+            urls = derive_news_urls(homepage)
             src = "official"
+        disc_key = (site.university, site.college, site.college_type)
+        if disc_key in discovered:
+            urls = list(dict.fromkeys(discovered[disc_key] + urls))
+            src = "manual" if src == "manual" or discovered[disc_key] else src
         entries.append(CollegeRegistryEntry(
             university=site.university,
             college=site.college,
             college_type=site.college_type,
             news_urls=urls,
-            base_url=site.homepage,
+            base_url=homepage,
             province=site.province,
             tags=site.tags,
             source=src,

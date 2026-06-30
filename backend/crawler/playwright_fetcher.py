@@ -3,13 +3,32 @@ import asyncio
 import logging
 
 from config import settings
-from crawler.fetcher import is_blocked_html, site_root
+from crawler.anti_crawl import (
+    MOBILE_UA,
+    browser_headers,
+    is_blocked_html,
+    site_root,
+)
 
 logger = logging.getLogger(__name__)
 
 _browser = None
 _playwright = None
 _lock = asyncio.Lock()
+
+_STEALTH_INIT = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+window.chrome = window.chrome || { runtime: {} };
+Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+"""
+
+_LAUNCH_ARGS = (
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage",
+    "--no-sandbox",
+    "--disable-infobars",
+)
 
 
 async def _ensure_browser():
@@ -26,7 +45,10 @@ async def _ensure_browser():
             return None
         try:
             _playwright = await async_playwright().start()
-            _browser = await _playwright.chromium.launch(headless=True)
+            _browser = await _playwright.chromium.launch(
+                headless=True,
+                args=list(_LAUNCH_ARGS),
+            )
             return _browser
         except Exception as e:
             logger.warning("Playwright 启动失败: %s", e)
@@ -50,34 +72,37 @@ async def close_playwright() -> None:
             _playwright = None
 
 
-async def fetch_with_playwright(url: str) -> str | None:
-    """用无头 Chromium 渲染页面，绕过部分 JS 反爬。"""
-    if not settings.playwright_enabled or not url:
-        return None
-
-    browser = await _ensure_browser()
-    if not browser:
-        return None
-
+async def _fetch_in_context(
+    browser,
+    url: str,
+    *,
+    mobile: bool,
+) -> str | None:
     timeout_ms = settings.playwright_timeout * 1000
     wait_ms = settings.playwright_wait_ms
+    ua = MOBILE_UA if mobile else settings.user_agent
+    root = site_root(url)
+
+    context = await browser.new_context(
+        user_agent=ua,
+        locale="zh-CN",
+        timezone_id="Asia/Shanghai",
+        viewport={"width": 390, "height": 844} if mobile else {"width": 1920, "height": 1080},
+        is_mobile=mobile,
+        has_touch=mobile,
+        ignore_https_errors=True,
+        extra_http_headers={
+            k: v
+            for k, v in browser_headers(url, referer=root, mobile=mobile).items()
+            if k.lower() not in ("host", "content-length")
+        },
+    )
+    await context.add_init_script(_STEALTH_INIT)
+    page = await context.new_page()
 
     try:
-        context = await browser.new_context(
-            user_agent=settings.user_agent,
-            locale="zh-CN",
-            extra_http_headers={
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            },
-        )
-        page = await context.new_page()
-        root = site_root(url)
         try:
-            await page.goto(
-                root,
-                wait_until="domcontentloaded",
-                timeout=timeout_ms,
-            )
+            await page.goto(root, wait_until="domcontentloaded", timeout=timeout_ms)
         except Exception:
             pass
         await page.goto(
@@ -88,8 +113,9 @@ async def fetch_with_playwright(url: str) -> str | None:
         )
         if wait_ms > 0:
             await asyncio.sleep(wait_ms / 1000)
-        # WAF 挑战页（如 HTTP 202）需等待 JS 跳转后再取正文
-        for _ in range(4):
+
+        html = ""
+        for _ in range(5):
             html = await page.content()
             if html and not is_blocked_html(html):
                 break
@@ -98,11 +124,31 @@ async def fetch_with_playwright(url: str) -> str | None:
                 await page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
-        html = await page.content()
-        await context.close()
+
         if html and not is_blocked_html(html):
-            logger.info("Playwright 抓取成功: %s", url[:80])
+            logger.info("Playwright 抓取成功 (%s): %s", "mobile" if mobile else "desktop", url[:80])
             return html
     except Exception as e:
         logger.debug("Playwright fetch failed %s: %s", url, e)
+    finally:
+        await context.close()
+    return None
+
+
+async def fetch_with_playwright(url: str) -> str | None:
+    """用无头 Chromium 渲染页面，绕过部分 JS 反爬。"""
+    if not settings.playwright_enabled or not url:
+        return None
+
+    browser = await _ensure_browser()
+    if not browser:
+        return None
+
+    from crawler.anti_crawl import prefers_mobile_first
+
+    order = (True, False) if prefers_mobile_first(url) else (False, True)
+    for mobile in order:
+        html = await _fetch_in_context(browser, url, mobile=mobile)
+        if html:
+            return html
     return None
